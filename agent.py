@@ -19,9 +19,6 @@ class Agent:
         obs = torch.from_numpy(np.asarray(observation, dtype=np.float32))[None, :]
         logits, values = self.model(obs)
 
-        ## TODO:
-        # Compute the action index using the model forward function:
-        # action_index = ...
-        raise NotImplementedError()
+        action_index = torch.argmax(logits, dim=-1).item()
 
         return action_index

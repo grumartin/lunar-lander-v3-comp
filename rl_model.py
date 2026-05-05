@@ -78,10 +78,8 @@ class RLModel(nn.Module):
             obs_t = self._rollout_last_obs
             logits, _ = self.forward(torch.from_numpy(obs_t).to(device))
 
-            ## TODO:
-            # Compute the action index using the model forward function:
-            # actions = ...
-            raise NotImplementedError("")
+            probs = F.softmax(logits, dim=-1)
+            actions = torch.multinomial(probs, num_samples=1).squeeze(-1).cpu().numpy()
 
             next_obs = np.zeros_like(obs_t)
             for i, env in enumerate(env_list):
@@ -130,19 +128,24 @@ class RLModel(nn.Module):
         with torch.no_grad():
             _, last_value = self.forward(last_obs)  # (B,)
 
-        ## TODO:
         # 1) Compute the future returns with discount factor gamma
-        # Warning: The episode ends when is_done is True
-        # returns = ...
-        #
-        # 2) We will implement the A2C actor critic algorithm.
-        # Compute the following losses
-        # value_loss = ...
-        # policy_loss = ...
-        #
-        # 3) compute the term of entropy regularizationo of the action distribution:
-        # entropy = ...
-        raise NotImplementedError("")
+        returns = torch.zeros_like(rewards)
+        returns[:, -1] = rewards[:, -1] + self.gamma * last_value * (1 - is_done[:, -1])
+        for t in reversed(range(T - 1)):
+            returns[:, t] = rewards[:, t] + self.gamma * returns[:, t + 1] * (1 - is_done[:, t])
+
+        # 2) Compute value loss and policy loss (A2C actor-critic)
+        value_loss = F.mse_loss(values, returns)
+
+        log_probs = F.log_softmax(logits, dim=-1)
+        action_log_probs = log_probs.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
+        advantages = (returns - values).detach()
+        policy_loss = -(action_log_probs * advantages).mean()
+
+        # 3) Compute entropy regularization term
+        probs = F.softmax(logits, dim=-1)
+        log_probs_for_entropy = F.log_softmax(logits, dim=-1)
+        entropy = -(probs * log_probs_for_entropy).sum(dim=-1).mean()
 
         loss = policy_loss + value_coef * value_loss - entropy_coef * entropy
 
