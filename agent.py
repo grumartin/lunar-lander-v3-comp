@@ -8,7 +8,7 @@ from rl_model import RLModel
 class Agent:
     def __init__(self, env=None, player_name=None):
         path = "model.pt"
-        self.model = RLModel(obs_dim=8, num_actions=4)
+        self.model = RLModel(obs_dim=8, num_actions=4, hidden=128)
         if os.path.exists(path):
             self.model.load(path)
         self.model.eval()
