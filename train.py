@@ -17,6 +17,7 @@ def main():
     p.add_argument("--entropy_coef", type=float, default=0.01)
     p.add_argument("--value_coef", type=float, default=0.5)
     p.add_argument("--reward_scale", type=float, default=10.0)
+    p.add_argument("--max_grad_norm", type=float, default=0.5)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--log_every", type=int, default=10)
     p.add_argument("--save_every", type=int, default=50)
@@ -51,6 +52,7 @@ def main():
         optimizer.zero_grad()
         losses = model.loss_a2c(rollout, entropy_coef=args.entropy_coef, value_coef=args.value_coef)
         losses["loss"].backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
         optimizer.step()
 
         if it % args.log_every == 0:

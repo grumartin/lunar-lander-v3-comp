@@ -4,20 +4,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def mlp(in_dim, out_dim, hidden):
-    return nn.Sequential(
-        nn.Linear(in_dim, hidden),
-        nn.ReLU(),
-        nn.Linear(hidden, out_dim),
-    )
-
-
 class RLModel(nn.Module):
-    """Minimal actor-critic model for discrete actions.
+    """Actor-critic model with shared trunk for discrete actions.
 
-    Two 1-hidden-layer MLPs: a policy head producing logits and a value head
-    producing V(s). No target network, no replay buffer, no observation stacking,
-    no RNN state. Trained with n-step A2C using `loss_a2c`.
+    Architecture:
+    - Shared trunk: 2 hidden layers with ReLU activations
+    - Policy head: single linear layer outputting action logits
+    - Value head: single linear layer outputting state value V(s)
+
+    Uses orthogonal weight initialization for better RL performance.
+    Trained with n-step A2C using `loss_a2c`.
     """
 
     def __init__(self, obs_dim, num_actions, hidden=64, reward_scale=10.0, gamma=0.99):
@@ -28,14 +24,38 @@ class RLModel(nn.Module):
         self.reward_scale = reward_scale
         self.gamma = gamma
 
-        self.policy = mlp(obs_dim, num_actions, hidden)
-        self.value = mlp(obs_dim, 1, hidden)
+        # Shared feature extractor (trunk): obs_dim → hidden → hidden
+        self.shared = nn.Sequential(
+            nn.Linear(obs_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden),
+            nn.ReLU()
+        )
+
+        # Separate heads for policy and value
+        self.policy_head = nn.Linear(hidden, num_actions)
+        self.value_head = nn.Linear(hidden, 1)
+
+        # Apply orthogonal initialization (standard for RL)
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights using orthogonal initialization."""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.orthogonal_(module.weight, gain=np.sqrt(2))
+                nn.init.constant_(module.bias, 0.0)
+
+        # Smaller init for policy head (helps with initial exploration)
+        nn.init.orthogonal_(self.policy_head.weight, gain=0.01)
+        nn.init.constant_(self.policy_head.bias, 0.0)
 
     def forward(self, observations):
         """observations: tensor of shape (..., obs_dim).
         Returns logits (..., num_actions) and values (...)."""
-        logits = self.policy(observations)
-        values = self.value(observations).squeeze(-1)
+        features = self.shared(observations)
+        logits = self.policy_head(features)
+        values = self.value_head(features).squeeze(-1)
         return logits, values
 
     @torch.inference_mode()
@@ -140,6 +160,10 @@ class RLModel(nn.Module):
         log_probs = F.log_softmax(logits, dim=-1)
         action_log_probs = log_probs.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
         advantages = (returns - values).detach()
+
+        # Normalize advantages to reduce variance (standard practice)
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
         policy_loss = -(action_log_probs * advantages).mean()
 
         # 3) Compute entropy regularization term
